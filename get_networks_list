@@ -1,0 +1,111 @@
+#
+# Description: Выводит Список доступных сетей (сетевых профилей) 
+#
+
+require 'rest_client'
+require 'json'
+require 'nokogiri'
+
+$evm.log(:info, "get_networks_list started")
+
+# Скрыть список , если выбрано удаление
+if $evm.root['dialog_action_list'] ==  'delete network'
+  disp = false  
+else  disp = true
+end
+
+server = $evm.object['url_api_rhv'] 
+username = $evm.object['user_rhv'] 
+password = $evm.object.decrypt('password_rhv') 
+@connection = "#{username}:#{password}@#{server}"
+
+vm = $evm.root['vm']
+vm_id = vm.uid_ems
+nic_id = $evm.root['dialog_nic_list'] 
+
+network_list = Hash.new
+
+if nic_id.nil?
+	network_list['!'] = '-- select from list --'
+else
+# Сначала найдем текущий сетевой профиль, чтобы вывести его первым в списке
+	url_vm_nic_id = @connection + '/ovirt-engine/api/vms/' + vm_id + '/nics/' + nic_id
+	p url_vm_nic_id
+	get_vnicprofile_url = RestClient::Resource.new(url_vm_nic_id,  :verify_ssl =>  false).get
+	doc = Nokogiri::XML(get_vnicprofile_url)
+	root = doc.root
+	vm_nic = root.xpath("//vnic_profile/@href")
+	vm_nic_link = vm_nic.map { |node| node.children.text  } 
+
+	url_vnic_profile = @connection + vm_nic_link[0].to_s
+	get_vnicprofile = RestClient::Resource.new(url_vnic_profile,  :verify_ssl =>  false).get
+	doc = Nokogiri::XML(get_vnicprofile)
+	root = doc.root
+	vm_vnic_profile = root.xpath("//name") 
+  	vm_vnic_id = root.xpath("//vnic_profile/@id") 
+	vm_network_url = root.xpath("//network/@href")
+#vm_nic.map { |node| node.children.text  } 
+	vnic_profile_list = vm_vnic_profile.map { |node| node.children.text  }
+  	vnic_vnic_id_arr = vm_vnic_id.map { |node| node.children.text  }
+	vm_network_url_arr = vm_network_url.map { |node| node.children.text  }
+
+	url_get_network = @connection + vm_network_url_arr[0].to_s
+	get_network = RestClient::Resource.new(url_get_network,  :verify_ssl =>  false).get
+	doc = Nokogiri::XML(get_network)
+	root = doc.root
+	network_name = root.xpath("//name")
+	network_name_arr = network_name.map { |node| node.children.text  }
+	# сохраним извлеченный url тега description на NOC
+	network_description = root.xpath("//description")
+	network_description_arr = network_description.map { |node| node.children.text  }
+
+	network_list = {network_description_arr[0].to_s + '|' + vnic_vnic_id_arr[0].to_s => vnic_profile_list[0].to_s + '/' + network_name_arr[0].to_s }
+end
+# Выводим список всех доступных профилей
+unless $evm.root['dialog_action_list'] ==  'delete network' # не заходим в этот блок, если выбрано удаление
+    cluster_name = vm.v_parent_blue_folder_display_path
+    p vm.v_parent_blue_folder_display_path
+    p cluster_name
+   	url_cluster_network = @connection + '/ovirt-engine/api/networks?search=cluster_network=' + cluster_name
+    p url_cluster_network
+	get_cluster_network = RestClient::Resource.new(url_cluster_network,  :verify_ssl =>  false).get
+	doc = Nokogiri::XML(get_cluster_network)
+	root = doc.root
+  
+   # получим url vnicprofiles
+	vm_network_url = root.xpath("//network//link[@rel=\"vnicprofiles\"]/@href")
+	vm_network_url_arr = vm_network_url.map { |node| node.children.text  }
+    p vm_network_url_arr
+  
+   # получим имя сети и ссылку на NOC
+    network_name = root.xpath("//name")
+	network_name_arr = network_name.map { |node| node.children.text  }
+    network_description = root.xpath("//description")
+    network_description_arr = network_description.map { |node| node.children.text  }
+
+	network_name_arr.zip(vm_network_url_arr,network_description_arr).each do |network_name, network_url,descr|
+      url_network_vnicprofiles = @connection + network_url
+      get_network_vnicprofiles = RestClient::Resource.new(url_network_vnicprofiles,  :verify_ssl =>  false).get
+      doc = Nokogiri::XML(get_network_vnicprofiles)
+      data = doc.search('vnic_profile').map do |group|
+  		[
+		    group['id'],
+		    group.at('name').text,
+		  ]
+	  end
+
+	 data.each { |k,v| if v.start_with?("vicloud"); network_list[descr +'|' + k] = v + '/' + network_name  end }
+	 p network_list 
+	end
+end
+list_values = {
+#    'sort_by'   => :description, #сортировка убрана, чтобы первым в списке шел текущий сетевой профиль
+    'data_type' => :string,
+    'visible' => disp,
+    'required' => false,
+    'protected' => false,
+    'values' => network_list,
+}
+list_values.each { |key, value| $evm.object[key] = value }
+
+exit MIQ_OK
