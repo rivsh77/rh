@@ -66,37 +66,27 @@ unless $evm.root['dialog_action_list'] ==  'delete network' # не заходи�
     cluster_name = vm.v_parent_blue_folder_display_path
     p vm.v_parent_blue_folder_display_path
     p cluster_name
-   	url_cluster_network = @connection + '/ovirt-engine/api/networks?search=cluster_network=' + cluster_name
+   	url_cluster_network = @connection + '/ovirt-engine/api/networks?search=cluster_network=' + cluster_name + '&follow=vnic_profiles'
     p url_cluster_network
 	get_cluster_network = RestClient::Resource.new(url_cluster_network,  :verify_ssl =>  false).get
 	doc = Nokogiri::XML(get_cluster_network)
-	root = doc.root
-  
-   # получим url vnicprofiles
-	vm_network_url = root.xpath("//network//link[@rel=\"vnicprofiles\"]/@href")
-	vm_network_url_arr = vm_network_url.map { |node| node.children.text  }
-    p vm_network_url_arr
-  
-   # получим имя сети и ссылку на NOC
-    network_name = root.xpath("//name")
-	network_name_arr = network_name.map { |node| node.children.text  }
-    network_description = root.xpath("//description")
-    network_description_arr = network_description.map { |node| node.children.text  }
+#	root = doc.root
+  doc.css("network").each do |network|
+    network_name = network.at_css('name').try(:text)
+    network_description = network.at_css('description').try(:text)
+    vnic_profiles = network.css("vnic_profiles")
+    vnic_profile_name = nil
+    vnic_profile_id = nil
+   	vnic_profiles.each do |vnic_profile| 
+      vnic_profile_id = vnic_profile.at('./vnic_profile/@id')
+  	  vnic_profile_name = vnic_profile.at_css('name').try(:text)
+    end
+    if (vnic_profile_name) && (vnic_profile_name.start_with?("vicloud"))
+      network_list[network_description +'|' + vnic_profile_id] = vnic_profile_name + '/' + network_name  
+      p network_list  #[1/4/192.168.130.128/28 | 1e32008e-9b5b-47dc-a0b2-b43ca2aac80d] = vicloud_1Gbit/vm0701
+    end
+  end   
 
-	network_name_arr.zip(vm_network_url_arr,network_description_arr).each do |network_name, network_url,descr|
-      url_network_vnicprofiles = @connection + network_url
-      get_network_vnicprofiles = RestClient::Resource.new(url_network_vnicprofiles,  :verify_ssl =>  false).get
-      doc = Nokogiri::XML(get_network_vnicprofiles)
-      data = doc.search('vnic_profile').map do |group|
-  		[
-		    group['id'],
-		    group.at('name').text,
-		  ]
-	  end
-
-	 data.each { |k,v| if v.start_with?("vicloud"); network_list[descr +'|' + k] = v + '/' + network_name  end }
-	 p network_list 
-	end
 end
 list_values = {
 #    'sort_by'   => :description, #сортировка убрана, чтобы первым в списке шел текущий сетевой профиль
