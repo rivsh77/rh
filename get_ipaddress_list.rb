@@ -19,16 +19,18 @@ if $evm.root['dialog_action_list'] ==  'delete network'
   disp = false  
 else 
 disp = true
+
 # Определим текущий ip по Networkfilterparameter из RHV
 server_rhv = $evm.object['url_api_rhv'] 
 username_rhv = $evm.object['user_rhv'] 
 password_rhv = $evm.object.decrypt('password_rhv')
 @connection_rhv = "#{username_rhv}:#{password_rhv}@#{server_rhv}"
 
-vm = $evm.root['vm']
-vm_id = vm.uid_ems
-nic_id = $evm.root['dialog_nic_list']
-unless nic_id.nil? || $evm.root['dialog_action_list'] ==  'create network'
+if $evm.root['vmdb_object_type'] == 'vm'
+ vm = $evm.root['vm']
+ vm_id = vm.uid_ems
+ nic_id = $evm.root['dialog_nic_list']
+ unless nic_id.nil? || $evm.root['dialog_action_list'] ==  'create network'
 	url_vm_networkfilterparam = @connection_rhv + '/ovirt-engine/api/vms/' + vm_id + '/nics/' + nic_id + '/networkfilterparameters'
 	get_vm_networkfilterparam = RestClient::Resource.new(url_vm_networkfilterparam,  :verify_ssl =>  false).get
 	doc = Nokogiri::XML(get_vm_networkfilterparam)
@@ -36,7 +38,8 @@ unless nic_id.nil? || $evm.root['dialog_action_list'] ==  'create network'
 	vm_networkfilterparam = root.xpath("//network_filter_parameter/value")
 	vm_curr_ipaddress_arr = vm_networkfilterparam.map { |node| node.children.text  } 
 	p vm_curr_ipaddress_arr[0] 
-end
+ end
+end  
 
 # Обращаемся в NOC за свободными ip в данной сети
 server = $evm.object['url_sous']
@@ -92,14 +95,19 @@ unless (prefix_name.nil? || prefix_name == ["!"])
 	exit MIQ_ERROR
 end
 
-if vm_curr_ipaddress_arr[0].nil?
-	ipaddress_list = {'!' => '-- select from list --'}.merge(pre_ipaddress_list)
-else 
-  # В списке сначала выводим текущий адрес из Networkfilterparameter
-	ipaddress_list = {vm_curr_ipaddress_arr[0]=> vm_curr_ipaddress_arr[0] }.merge(pre_ipaddress_list)
+case $evm.root['vmdb_object_type']
+	when 'vm'
+		if vm_curr_ipaddress_arr[0].nil?
+			ipaddress_list = {'!' => '-- select from list --'}.merge(pre_ipaddress_list)
+		else 
+  		# В списке сначала выводим текущий адрес из Networkfilterparameter
+			ipaddress_list = {vm_curr_ipaddress_arr[0]=> vm_curr_ipaddress_arr[0] }.merge(pre_ipaddress_list)
+		end
+    when 'service_template'
+		ipaddress_list = {'!' => '-- select from list --'}.merge(pre_ipaddress_list) 
+end
 end
 
-end
 list_values = {
 #    'sort_by'   => :value, #сортировка убрана, чтобы первым в списке шел текущий сетевой профиль
     'visible' => disp,
