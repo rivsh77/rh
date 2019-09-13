@@ -52,18 +52,18 @@ def takeAddressSOUS(ip,vm_name,vm_id,prefix_noc_url)
 end
 
 def addNICtoVM(ip,vm_name,vm_id,auth_token,vnic_profile_id)
-  $evm.log(:info, "add NIC to RHV VM")
-  url = 'https://' + @connection_rhv + '/ovirt-engine/api/vms/' + vm_id + '/nics'
-  request = RestClient::Request.new(
-       method: :post,
-       url: url, 
-       :headers => {:content_type=> :xml, :accept=> :xml, :authorization => "Basic #{auth_token}" },
-       :payload => "<nic><name>nic2</name><interface>virtio</interface><vnic_profile id='#{vnic_profile_id}'/></nic>",
-       verify_ssl: false        
-      ) 
-  p request
-  rest_result = request.execute
-  
+  #$evm.log(:info, "add NIC to RHV VM")
+  #url = 'https://' + @connection_rhv + '/ovirt-engine/api/vms/' + vm_id + '/nics'
+  #request = RestClient::Request.new(
+  #     method: :post,
+  #     url: url, 
+  #     :headers => {:content_type=> :xml, :accept=> :xml, :authorization => "Basic #{auth_token}" },
+  #     :payload => "<nic><name>nic2</name><interface>virtio</interface><vnic_profile id='#{vnic_profile_id}'/></nic>",
+  #     verify_ssl: false        
+  #    ) 
+  #p request
+  #rest_result = request.execute
+     
   # Получим id созданного nic<N>
   url_vm_nic = 'https://' + @connection_rhv + '/ovirt-engine/api/vms/' + vm_id + '/nics'
   p url_vm_nic
@@ -76,7 +76,26 @@ def addNICtoVM(ip,vm_name,vm_id,auth_token,vnic_profile_id)
 	  ]
 	end
   next_nic_id = {}
-  data.each { |k,v| if v == 'nic2';  next_nic_id[0] = k end }
+  data.each { |k,v| if v == 'nic1';  next_nic_id[0] = k end }
+
+  # Изменить NIC в VM
+  url = 'https://' + @connection_rhv + '/ovirt-engine/api/vms/' + vm_id + '/nics/' + next_nic_id[0]
+  request = RestClient::Request.new(
+       method: :put,
+       url: url, 
+       :headers => {:content_type=> :xml, :accept=> :xml, :authorization => "Basic #{auth_token}" },
+       :payload => "<nic><vnic_profile id='#{vnic_profile_id}'/></nic>",
+       verify_ssl: false        
+      )
+  i = 0
+  begin
+    i += 1
+  	rest_result = request.execute
+  rescue => e
+    sleep(1.minutes) # Ждем когда сварится ВМ, чтобы не получить ошибку 409
+    retry if i < 5   # повторим попытку
+  end 
+  p request
  
   # Добавить выбранный ip адрес в network_filter_parameters
   url = 'https://' + @connection_rhv + '/ovirt-engine/api/vms/' + vm_id + '/nics/' + next_nic_id[0] + '/networkfilterparameters'
@@ -89,6 +108,30 @@ def addNICtoVM(ip,vm_name,vm_id,auth_token,vnic_profile_id)
       ) 
   p request
   rest_result = request.execute
+
+  # Unplug/Plug NIC 
+  url = 'https://' + @connection_rhv + '/ovirt-engine/api/vms/' + vm_id + '/nics/' + next_nic_id[0] + '/deactivate'
+  request = RestClient::Request.new(
+       method: :post,
+	   url: url, 
+	   :headers => {:content_type=> :xml, :accept=> :xml, :authorization => "Basic #{auth_token}" },
+	   :payload => "<action/>",
+ 	   verify_ssl: false        
+   	 ) 
+  rest_result = request.execute
+  p request
+
+  url = 'https://' + @connection_rhv + '/ovirt-engine/api/vms/' + vm_id + '/nics/' + next_nic_id[0] + '/activate'
+  request = RestClient::Request.new(
+       method: :post,
+	   url: url, 
+	   :headers => {:content_type=> :xml, :accept=> :xml, :authorization => "Basic #{auth_token}" },
+	   :payload => "<action/>",
+ 	   verify_ssl: false        
+   	 ) 
+  rest_result = request.execute
+  p request
+
      
   $evm.log(:info, "create network completed successfully")
 end
@@ -97,7 +140,7 @@ end
 
 puts "Using #{ip_addr} to provision the VM"
 takeAddressSOUS(ip_addr,vm_name,vm_id,prefix_noc_url)
-sleep(3.minutes)
+sleep(3.minutes) # Ждем когда сварится ВМ, чтобы не получить ошибку 409
 addNICtoVM(ip_addr,vm_name,vm_id,auth_token,vnic_profile_id)
 
 prov.set_option(:ip_addr, ip_addr)
